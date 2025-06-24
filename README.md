@@ -1,4 +1,4 @@
-## A Beam Search-Inspired Variant of Gradient Descent
+## Beam-GD: A Beam Search-Inspired Variant of Gradient Descent
 
 Most gradient-based optimization methods are inherently greedy: they descend the steepest slope at each step using a single model trajectory. While this works well in many smooth landscapes, it can lead to suboptimal outcomes in high-dimensional or noisy problems where local minima and saddle points abound.
 
