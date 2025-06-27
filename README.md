@@ -1,4 +1,4 @@
-### Beam-GD
+### Beam-GD: Beam Search Based Gradient Descent
 
 Many classic algorithms in statistics and machine learning rely on greedy principles: forward stepwise regression, hierarchical clustering, CART. At each step, they make the locally optimal choice, often because it's fast and works well enough. But greed has limits. Early choices constrain later options. The path you pick shapes what you can see—and what you miss.
 
