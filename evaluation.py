@@ -314,6 +314,53 @@ def train_multistart_sgd(model_fn: Callable, X_train: torch.Tensor, y_train: tor
     return models[best_idx], all_train_losses[best_idx], all_val_losses[best_idx]
 
 
+def train_checkpoint_restart_sgd(model_fn: Callable, X_train: torch.Tensor, y_train: torch.Tensor,
+                                  X_val: torch.Tensor, y_val: torch.Tensor, criterion: nn.Module,
+                                  epochs: int = 50, lr: float = 0.01, checkpoint_interval: int = 10,
+                                  window_size: int = 3, noise_std: float = 0.01) -> Tuple[nn.Module, List[float], List[float]]:
+    """
+    Sequential alternative to Beam-GD.
+    Runs single trajectory, periodically restarts from best checkpoint.
+    """
+    model = model_fn()
+    optimizer = optim.SGD(model.parameters(), lr=lr)
+
+    checkpoints = []
+    best_model = None
+    best_val_loss = float('inf')
+    train_losses, val_losses = [], []
+
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        loss = criterion(model(X_train), y_train)
+        loss.backward()
+        optimizer.step()
+
+        train_losses.append(loss.item())
+
+        if (epoch + 1) % checkpoint_interval == 0:
+            model.eval()
+            with torch.no_grad():
+                val_loss = criterion(model(X_val), y_val).item()
+
+            checkpoints.append((copy.deepcopy(model), val_loss))
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model = copy.deepcopy(model)
+
+            if len(checkpoints) >= window_size:
+                best_in_window = min(checkpoints, key=lambda x: x[1])
+                model = clone_model_with_noise(best_in_window[0], noise_std)
+                optimizer = optim.SGD(model.parameters(), lr=lr)
+                checkpoints = []
+
+        val_losses.append(evaluate_model(model, X_val, y_val, criterion))
+
+    return best_model if best_model else model, train_losses, val_losses
+
+
 def train_beam_no_noise(model_fn: Callable, X_train: torch.Tensor, y_train: torch.Tensor,
                         X_val: torch.Tensor, y_val: torch.Tensor, criterion: nn.Module,
                         epochs: int = 50, lr: float = 0.01, beam_width: int = 3) -> Tuple[nn.Module, List[float], List[float]]:
@@ -805,6 +852,7 @@ def run_ablation_study(n_trials: int = 30, epochs: int = 50, seed_base: int = 42
         "Noisy SGD": [],
         "Multi-start SGD": [],
         "Beam (no noise)": [],
+        "Checkpoint-Restart": [],
         "Vanilla SGD": [],
     }
 
@@ -841,11 +889,16 @@ def run_ablation_study(n_trials: int = 30, epochs: int = 50, seed_base: int = 42
             data["X_val"], data["y_val"], criterion, epochs=epochs)
         results["Beam (no noise)"].append(beam_nonoise_val[-1])
 
+        _, _, checkpoint_val = train_checkpoint_restart_sgd(
+            model_fn, data["X_train"], data["y_train"],
+            data["X_val"], data["y_val"], criterion, epochs=epochs)
+        results["Checkpoint-Restart"].append(checkpoint_val[-1])
+
         if (trial + 1) % 10 == 0:
             print(f"  Completed {trial + 1}/{n_trials} trials")
 
     statistical_results = []
-    for variant in ["Vanilla SGD", "Noisy SGD", "Multi-start SGD", "Beam (no noise)"]:
+    for variant in ["Vanilla SGD", "Noisy SGD", "Multi-start SGD", "Beam (no noise)", "Checkpoint-Restart"]:
         result = statistical_comparison(
             np.array(results[variant]),
             np.array(results["Full Beam-GD"]),

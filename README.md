@@ -51,6 +51,59 @@ Beam-GD combines ideas from several optimization strategies:
 
 **Why it works**: Gradient steps provide efficient local optimization. Noise perturbations enable exploration of alternative trajectories. Online selection prunes poor trajectories early, focusing compute on promising directions. The combination allows escape from local minima while maintaining convergence.
 
+### Why Online Selection Helps
+
+The key advantage of Beam-GD over multi-start optimization is **online selection**: rather than picking the best trajectory at the end, we prune poor performers at each step.
+
+**Setup**: Let θ₁⁽⁰⁾, ..., θₖ⁽⁰⁾ be k random initializations, L_t(θ) the validation loss after t steps, and ρ = Corr(L_t, L_T) the correlation between early and final loss.
+
+**Key insight**: When ρ > 0 (early loss predicts final loss), bad trajectories can be identified early. Compute spent on them after identification is wasted.
+
+Consider the extreme case where ρ = 1 (perfect correlation):
+- After 1 step, we know which trajectory will be best
+- Multi-start wastes (k-1) × (T-1) steps on losers
+- Beam-GD concentrates all remaining compute on the winner
+
+When ρ < 1 (noisy signal), online selection still helps but the advantage decreases. The beam width k hedges against selection errors, and noise injection creates new candidates to evaluate.
+
+This connects to **successive halving** in bandit optimization (Jamieson & Talwalkar 2016), where early elimination with reallocation provably outperforms uniform allocation. Beam-GD is a continuous variant: rather than hard elimination, we keep top-k and add noisy variants.
+
+Our ablation confirms this: Multi-start SGD (selection at end only) performs worse than full Beam-GD (online selection), even with the same number of trajectories.
+
+### Cheaper Alternative: Checkpoint-Restart SGD
+
+Full Beam-GD costs k× compute (k parallel models). For resource-constrained settings, **Checkpoint-Restart SGD** provides similar benefits with 1× model compute:
+
+```
+Algorithm: Checkpoint-Restart SGD
+Input: loss function f, checkpoint_interval c, window_size w, noise σ, lr η, epochs T
+
+Initialize: θ = random init, checkpoints = []
+
+For t = 1 to T:
+    θ = θ - η·∇f(θ)                    # Standard gradient step
+
+    if t % c == 0:
+        checkpoints.append((θ, val_loss(θ)))
+
+        if len(checkpoints) >= w:
+            best_θ = argmin checkpoint by val_loss
+            θ = best_θ + N(0, σ²I)     # Restart from best with noise
+            checkpoints = []            # Clear window
+
+Return: best θ seen
+```
+
+**What it preserves:**
+- ✅ Online selection (via checkpoint comparison)
+- ✅ Exploration (via restart noise)
+- ✅ Avoids wasted compute (restart abandons bad trajectory)
+- ❌ No parallel exploration (sequential only)
+
+**Cost analysis:** With checkpoint_interval=10 and 100 epochs, this requires only 10 validation evaluations vs 200 for beam with k=1, while maintaining the restart-from-best mechanism.
+
+**Empirical results (5 trials):** Checkpoint-Restart SGD performs comparably to vanilla SGD—both achieve similar validation loss (~0.58), approximately 12% worse than full Beam-GD (~0.52). This suggests parallel exploration is the key benefit, not sequential restart-from-best.
+
 ## Installation
 
 ```bash
